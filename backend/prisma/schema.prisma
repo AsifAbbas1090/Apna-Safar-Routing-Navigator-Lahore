@@ -11,18 +11,24 @@ datasource db {
 
 // Transport stop locations
 model Stop {
-  id        String   @id @default(uuid())
+  id        String                                @id @default(uuid())
   name      String
+  line      String?
   latitude  Float
   longitude Float
   type      StopType
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isStation Boolean                               @default(false)
+  // PostGIS geography point (lat/lng) for geospatial queries
+  location  Unsupported("geography(Point,4326)")?
+  createdAt DateTime                              @default(now())
+  updatedAt DateTime                              @updatedAt
 
   // Relations
-  routeStops RouteStop[]
-  transfersFrom Transfer[] @relation("FromStop")
-  transfersTo   Transfer[] @relation("ToStop")
+  routeStops         RouteStop[]
+  transfersFrom      Transfer[]     @relation("FromStop")
+  transfersTo        Transfer[]     @relation("ToStop")
+  plannedRoutesStart PlannedRoute[] @relation("PlannedRouteStart")
+  plannedRoutesEnd   PlannedRoute[] @relation("PlannedRouteEnd")
 
   @@index([latitude, longitude])
   @@index([type])
@@ -31,12 +37,13 @@ model Stop {
 
 // Transport routes (bus lines, metro lines, etc.)
 model Route {
-  id            String      @id @default(uuid())
+  id            String        @id @default(uuid())
   name          String
+  line          String?
   transportType TransportType
-  color         String?     // Hex color for UI display
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  color         String? // Hex color for UI display
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   // Relations
   routeStops RouteStop[]
@@ -48,12 +55,12 @@ model Route {
 
 // Junction table: Routes and their stops in order
 model RouteStop {
-  id         String   @id @default(uuid())
-  routeId    String
-  stopId     String
-  stopOrder  Int      // Order of stop in route (0, 1, 2, ...)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid())
+  routeId   String
+  stopId    String
+  stopOrder Int // Order of stop in route (0, 1, 2, ...)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
@@ -67,13 +74,13 @@ model RouteStop {
 
 // Transfer points between stops (walking connections)
 model Transfer {
-  id                 String   @id @default(uuid())
-  fromStopId         String
-  toStopId           String
-  walkingDistanceM   Float    // Distance in meters
-  estimatedTimeMin   Int      // Estimated walking time in minutes
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id               String   @id @default(uuid())
+  fromStopId       String
+  toStopId         String
+  walkingDistanceM Float // Distance in meters
+  estimatedTimeMin Int // Estimated walking time in minutes
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   // Relations
   fromStop Stop @relation("FromStop", fields: [fromStopId], references: [id], onDelete: Cascade)
@@ -87,17 +94,70 @@ model Transfer {
 
 // Fare rules (for future pricing features)
 model FareRule {
-  id         String   @id @default(uuid())
-  routeId    String
-  baseFare   Float    // Base fare in PKR
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        String   @id @default(uuid())
+  routeId   String
+  baseFare  Float // Base fare in PKR
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
 
   @@index([routeId])
   @@map("fare_rules")
+}
+
+// Planned routes between stops (high-level summary for caching / history)
+model PlannedRoute {
+  id          String   @id @default(uuid())
+  startStopId String
+  endStopId   String
+  // Array of route IDs used in this plan (ordered)
+  routeIds    String[]
+  etaMinutes  Int // Estimated time of arrival in minutes
+  createdAt   DateTime @default(now())
+  
+  // User association
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Route completion tracking
+  actualDurationMin Int? // Actual time taken (for analytics)
+  completedAt DateTime? // When route was completed
+  isSaved Boolean @default(false) // User saved this route
+  savedName String? // User-given name for saved route
+  
+  // Route details (JSON stored as text, can be parsed)
+  stepsJson String? // Serialized route steps
+  preference String? // Route preference used (fastest, least-walking, least-transfers)
+  walkingDistanceM Float? // Total walking distance
+  transfersCount Int? // Number of transfers
+
+  startStop Stop @relation("PlannedRouteStart", fields: [startStopId], references: [id])
+  endStop   Stop @relation("PlannedRouteEnd", fields: [endStopId], references: [id])
+
+  @@index([startStopId])
+  @@index([endStopId])
+  @@index([userId])
+  @@index([completedAt])
+  @@index([isSaved])
+}
+
+// User table for authentication and personalization
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String?
+  occupation   String?  // e.g., "student", "professional", "retired"
+  // Supabase Auth handles password, so we store the auth user ID
+  supabaseUserId String? @unique // Links to Supabase Auth users
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  plannedRoutes PlannedRoute[]
+
+  @@map("users")
 }
 
 // Enums

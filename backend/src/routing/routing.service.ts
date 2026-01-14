@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { StopsRepository } from '../stops/stops.repository';
 import { RoutesRepository } from '../routes/routes.repository';
+import { PrismaService } from '../prisma/prisma.service';
 import { Stop, Route } from '@prisma/client';
 
 /**
@@ -21,29 +22,106 @@ export interface PlannedRoute {
   estimatedTime: number; // total time in minutes
   transfers: number;
   steps: RouteStep[];
+  walkingDistance?: number; // total walking distance in meters
+  routeIds?: string[]; // route IDs used
+  startStopId?: string; // start stop ID
+  endStopId?: string; // end stop ID
 }
 
 export type RoutePreference = 'fastest' | 'least-walking' | 'least-transfers';
 
+interface GraphEdge {
+  to: string;
+  weight: number; // time in minutes
+  walkingDistance?: number; // walking distance in meters
+  isTransfer?: boolean; // true if this is a transfer (walking)
+  routeId?: string; // route ID if on a route
+}
+
 /**
  * Routing Service
  * Core routing engine using graph-based pathfinding
- * Implements Dijkstra's algorithm for route planning
+ * Implements Dijkstra's algorithm with preference-based weighting
  */
 @Injectable()
 export class RoutingService {
   constructor(
     private readonly stopsRepository: StopsRepository,
     private readonly routesRepository: RoutesRepository,
+    private readonly prisma: PrismaService,
   ) {}
 
   /**
+   * Plan a route between two stops by their IDs
+   */
+  async planBetweenStops(
+    startStopId: string,
+    endStopId: string,
+    preference: RoutePreference = 'fastest',
+  ): Promise<PlannedRoute> {
+    const start = await this.stopsRepository.findById(startStopId);
+    const end = await this.stopsRepository.findById(endStopId);
+
+    if (!start || !end) {
+      throw new Error('Start or end stop not found');
+    }
+
+    return this.planRoute(
+      start.latitude,
+      start.longitude,
+      end.latitude,
+      end.longitude,
+      preference,
+    );
+  }
+
+  /**
+   * Plan a route with multiple waypoints
+   */
+  async planRouteWithWaypoints(
+    waypoints: Array<{ lat: number; lng: number }>,
+    preference: RoutePreference = 'fastest',
+  ): Promise<PlannedRoute> {
+    if (waypoints.length < 2) {
+      throw new Error('At least 2 waypoints required');
+    }
+
+    const allSteps: RouteStep[] = [];
+    let totalTime = 0;
+    let totalTransfers = 0;
+    let totalWalkingDistance = 0;
+    const allRouteIds: string[] = [];
+
+    // Plan route between each consecutive waypoint
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const segment = await this.planRoute(
+        waypoints[i].lat,
+        waypoints[i].lng,
+        waypoints[i + 1].lat,
+        waypoints[i + 1].lng,
+        preference,
+      );
+
+      allSteps.push(...segment.steps);
+      totalTime += segment.estimatedTime;
+      totalTransfers += segment.transfers;
+      totalWalkingDistance += segment.walkingDistance || 0;
+      if (segment.routeIds) {
+        allRouteIds.push(...segment.routeIds);
+      }
+    }
+
+    return {
+      estimatedTime: totalTime,
+      transfers: totalTransfers,
+      steps: allSteps,
+      walkingDistance: totalWalkingDistance,
+      routeIds: allRouteIds,
+    };
+  }
+
+  /**
    * Plan a route from origin to destination
-   * @param fromLat - Origin latitude
-   * @param fromLng - Origin longitude
-   * @param toLat - Destination latitude
-   * @param toLng - Destination longitude
-   * @param preference - Route preference (fastest, least-walking, least-transfers)
    */
   async planRoute(
     fromLat: number,
@@ -61,28 +139,62 @@ export class RoutingService {
       return this.createWalkingRoute(fromLat, fromLng, toLat, toLng);
     }
 
-    // Step 2: Build graph of stops and routes
-    const graph = await this.buildRouteGraph();
+    // Step 2: Build graph of stops and routes with preference-based weights
+    const graph = await this.buildRouteGraph(preference);
 
-    // Step 3: Find shortest path using Dijkstra's algorithm
-    const bestRoute = this.findShortestPath(
-      originStops[0].id,
-      destinationStops[0].id,
-      graph,
-      preference,
-    );
+    // Step 3: Find best path using Dijkstra's algorithm
+    // Try multiple origin/destination stop combinations
+    let bestRoute: PlannedRoute | null = null;
+    let bestScore = Infinity;
 
-    // Step 4: Convert path to route steps
-    return this.convertPathToRoute(bestRoute, fromLat, fromLng, toLat, toLng);
+    for (const originStop of originStops.slice(0, 3)) {
+      for (const destStop of destinationStops.slice(0, 3)) {
+        const path = this.findShortestPath(
+          originStop.id,
+          destStop.id,
+          graph,
+          preference,
+        );
+
+        if (path.length > 0) {
+          const route = await this.convertPathToRoute(
+            path,
+            fromLat,
+            fromLng,
+            toLat,
+            toLng,
+            originStop.id,
+            destStop.id,
+            preference,
+          );
+
+          // Score based on preference
+          const score = this.scoreRoute(route, preference);
+          if (score < bestScore) {
+            bestScore = score;
+            bestRoute = route;
+          }
+        }
+      }
+    }
+
+    if (bestRoute) {
+      return bestRoute;
+    }
+
+    // Fallback: Direct walking route
+    return this.createWalkingRoute(fromLat, fromLng, toLat, toLng);
   }
 
   /**
    * Build a graph representation of the transit network
    * Nodes: Stops
-   * Edges: Route segments and transfers
+   * Edges: Route segments and transfers with preference-based weights
    */
-  private async buildRouteGraph(): Promise<Map<string, Map<string, number>>> {
-    const graph = new Map<string, Map<string, number>>();
+  private async buildRouteGraph(
+    preference: RoutePreference,
+  ): Promise<Map<string, GraphEdge[]>> {
+    const graph = new Map<string, GraphEdge[]>();
 
     // Get all routes with their stops
     const routes = await this.routesRepository.findAll();
@@ -95,13 +207,71 @@ export class RoutingService {
         const fromStop = routeStops[i].stop;
         const toStop = routeStops[i + 1].stop;
 
-        // Calculate time based on distance (simplified - in production use actual schedule)
+        // Calculate time and distance
         const time = this.calculateTravelTime(fromStop, toStop, route.transportType);
+        const distance = this.calculateDistance(
+          fromStop.latitude,
+          fromStop.longitude,
+          toStop.latitude,
+          toStop.longitude,
+        );
+
+        // Weight based on preference
+        let weight = time;
+        if (preference === 'least-walking') {
+          // Penalize routes that might require more walking
+          weight = time * 1.1; // Slight penalty
+        } else if (preference === 'least-transfers') {
+          // Prefer longer routes on same line (no transfer)
+          weight = time * 0.9; // Slight bonus for staying on route
+        }
 
         if (!graph.has(fromStop.id)) {
-          graph.set(fromStop.id, new Map());
+          graph.set(fromStop.id, []);
         }
-        graph.get(fromStop.id)!.set(toStop.id, time);
+        graph.get(fromStop.id)!.push({
+          to: toStop.id,
+          weight,
+          routeId: route.id,
+          isTransfer: false,
+        });
+      }
+    }
+
+    // Add transfer edges (walking connections)
+    const allStops = await this.stopsRepository.findAll();
+    const transfers = await this.getTransfers();
+
+    for (const transfer of transfers) {
+      const fromStop = allStops.find((s) => s.id === transfer.fromStopId);
+      const toStop = allStops.find((s) => s.id === transfer.toStopId);
+
+      if (fromStop && toStop) {
+        const walkTime = transfer.estimatedTimeMin;
+        const walkDistance = transfer.walkingDistanceM;
+
+        // Weight based on preference
+        let weight = walkTime;
+        if (preference === 'least-walking') {
+          // Heavy penalty for walking
+          weight = walkTime * 3.0; // 3x penalty
+        } else if (preference === 'least-transfers') {
+          // Penalty for transfers (walking between stops)
+          weight = walkTime * 2.0; // 2x penalty
+        } else if (preference === 'fastest') {
+          // Walking is slower, but sometimes necessary
+          weight = walkTime * 1.2; // 1.2x penalty
+        }
+
+        if (!graph.has(fromStop.id)) {
+          graph.set(fromStop.id, []);
+        }
+        graph.get(fromStop.id)!.push({
+          to: toStop.id,
+          weight,
+          walkingDistance: walkDistance,
+          isTransfer: true,
+        });
       }
     }
 
@@ -109,16 +279,24 @@ export class RoutingService {
   }
 
   /**
-   * Find shortest path using Dijkstra's algorithm
+   * Get all transfers from database
+   */
+  private async getTransfers() {
+    // This would ideally use a transfers repository
+    // For now, we'll query directly
+    const prisma = (this.stopsRepository as any).prisma;
+    return prisma.transfer.findMany();
+  }
+
+  /**
+   * Find shortest path using Dijkstra's algorithm with preference-based weights
    */
   private findShortestPath(
     startId: string,
     endId: string,
-    graph: Map<string, Map<string, number>>,
+    graph: Map<string, GraphEdge[]>,
     preference: RoutePreference,
   ): string[] {
-    // Simplified Dijkstra implementation
-    // In production, use a proper graph library or optimize this
     const distances = new Map<string, number>();
     const previous = new Map<string, string>();
     const unvisited = new Set<string>();
@@ -151,16 +329,16 @@ export class RoutingService {
 
       unvisited.delete(current);
 
-      const neighbors = graph.get(current);
-      if (!neighbors) continue;
+      const edges = graph.get(current);
+      if (!edges) continue;
 
-      for (const [neighbor, weight] of neighbors.entries()) {
-        if (!unvisited.has(neighbor)) continue;
+      for (const edge of edges) {
+        if (!unvisited.has(edge.to)) continue;
 
-        const alt = (distances.get(current) ?? Infinity) + weight;
-        if (alt < (distances.get(neighbor) ?? Infinity)) {
-          distances.set(neighbor, alt);
-          previous.set(neighbor, current);
+        const alt = (distances.get(current) ?? Infinity) + edge.weight;
+        if (alt < (distances.get(edge.to) ?? Infinity)) {
+          distances.set(edge.to, alt);
+          previous.set(edge.to, current);
         }
       }
     }
@@ -178,6 +356,22 @@ export class RoutingService {
   }
 
   /**
+   * Score a route based on preference
+   */
+  private scoreRoute(route: PlannedRoute, preference: RoutePreference): number {
+    switch (preference) {
+      case 'fastest':
+        return route.estimatedTime;
+      case 'least-walking':
+        return (route.walkingDistance || 0) / 1000; // Convert to km
+      case 'least-transfers':
+        return route.transfers * 1000 + route.estimatedTime; // Heavily penalize transfers
+      default:
+        return route.estimatedTime;
+    }
+  }
+
+  /**
    * Convert path to route steps
    */
   private async convertPathToRoute(
@@ -186,6 +380,9 @@ export class RoutingService {
     fromLng: number,
     toLat: number,
     toLng: number,
+    startStopId: string,
+    endStopId: string,
+    preference: RoutePreference,
   ): Promise<PlannedRoute> {
     if (path.length === 0) {
       return this.createWalkingRoute(fromLat, fromLng, toLat, toLng);
@@ -194,119 +391,198 @@ export class RoutingService {
     const steps: RouteStep[] = [];
     let totalTime = 0;
     let transfers = 0;
+    let totalWalkingDistance = 0;
+    const routeIds: string[] = [];
+    let currentRouteId: string | null = null;
 
     // Add initial walking step to first stop
     const firstStop = await this.stopsRepository.findById(path[0]);
     if (firstStop) {
-      const walkTime = this.calculateWalkingTime(fromLat, fromLng, firstStop.latitude, firstStop.longitude);
+      const walkTime = this.calculateWalkingTime(
+        fromLat,
+        fromLng,
+        firstStop.latitude,
+        firstStop.longitude,
+      );
+      const walkDistance = this.calculateDistance(
+        fromLat,
+        fromLng,
+        firstStop.latitude,
+        firstStop.longitude,
+      );
+      totalWalkingDistance += walkDistance;
       steps.push({
         type: 'walk',
         from: 'Current Location',
         to: firstStop.name,
         time: walkTime,
+        distance: walkDistance,
       });
       totalTime += walkTime;
     }
 
-    // Add transit steps
+    // Process path segments
+    const graph = await this.buildRouteGraph(preference);
+
     for (let i = 0; i < path.length - 1; i++) {
-      const fromStop = await this.stopsRepository.findById(path[i]);
-      const toStop = await this.stopsRepository.findById(path[i + 1]);
+      const fromStopId = path[i];
+      const toStopId = path[i + 1];
+
+      const fromStop = await this.stopsRepository.findById(fromStopId);
+      const toStop = await this.stopsRepository.findById(toStopId);
 
       if (!fromStop || !toStop) continue;
 
-      // Find route connecting these stops
-      const route = await this.findRouteBetweenStops(path[i], path[i + 1]);
+      const edges = graph.get(fromStopId) || [];
+      const edge = edges.find((e) => e.to === toStopId);
 
-      if (route) {
-        steps.push({
-          type: this.mapTransportType(route.transportType),
-          from: fromStop.name,
-          to: toStop.name,
-          route: route.name,
-          time: this.calculateTravelTime(fromStop, toStop, route.transportType),
-        });
-        totalTime += this.calculateTravelTime(fromStop, toStop, route.transportType);
-        transfers++;
-      } else {
-        // Walking transfer
-        const walkTime = this.calculateWalkingTime(
-          fromStop.latitude,
-          fromStop.longitude,
-          toStop.latitude,
-          toStop.longitude,
-        );
-        steps.push({
-          type: 'walk',
-          from: fromStop.name,
-          to: toStop.name,
-          time: walkTime,
-        });
-        totalTime += walkTime;
+      if (edge) {
+        if (edge.isTransfer) {
+          // Walking transfer
+          transfers++;
+          totalWalkingDistance += edge.walkingDistance || 0;
+          steps.push({
+            type: 'walk',
+            from: fromStop.name,
+            to: toStop.name,
+            time: Math.round(edge.weight),
+            distance: edge.walkingDistance,
+          });
+          totalTime += Math.round(edge.weight);
+          currentRouteId = null;
+        } else if (edge.routeId) {
+          // On a route
+          if (currentRouteId !== edge.routeId) {
+            // New route segment
+            if (currentRouteId) {
+              transfers++; // Transfer between routes
+            }
+            currentRouteId = edge.routeId;
+            routeIds.push(edge.routeId);
+
+            const route = await this.routesRepository.findByIdWithStops(edge.routeId);
+            const routeName = route?.name || 'Unknown Route';
+            const routeType = route?.transportType.toLowerCase() as RouteStepType;
+
+            steps.push({
+              type: routeType === 'metro' ? 'metro' : routeType === 'train' ? 'train' : 'bus',
+              from: fromStop.name,
+              to: toStop.name,
+              route: routeName,
+              time: Math.round(edge.weight),
+            });
+            totalTime += Math.round(edge.weight);
+          } else {
+            // Continue on same route - update last step
+            const lastStep = steps[steps.length - 1];
+            if (lastStep) {
+              lastStep.to = toStop.name;
+              lastStep.time += Math.round(edge.weight);
+            }
+            totalTime += Math.round(edge.weight);
+          }
+        }
       }
     }
 
     // Add final walking step to destination
     const lastStop = await this.stopsRepository.findById(path[path.length - 1]);
     if (lastStop) {
-      const walkTime = this.calculateWalkingTime(lastStop.latitude, lastStop.longitude, toLat, toLng);
+      const walkTime = this.calculateWalkingTime(
+        lastStop.latitude,
+        lastStop.longitude,
+        toLat,
+        toLng,
+      );
+      const walkDistance = this.calculateDistance(
+        lastStop.latitude,
+        lastStop.longitude,
+        toLat,
+        toLng,
+      );
+      totalWalkingDistance += walkDistance;
       steps.push({
         type: 'walk',
         from: lastStop.name,
         to: 'Destination',
         time: walkTime,
+        distance: walkDistance,
       });
       totalTime += walkTime;
     }
 
     return {
-      estimatedTime: Math.round(totalTime),
-      transfers: Math.max(0, transfers - 1), // Subtract 1 as first route isn't a transfer
+      estimatedTime: totalTime,
+      transfers,
       steps,
+      walkingDistance: totalWalkingDistance,
+      routeIds: [...new Set(routeIds)], // Remove duplicates
+      startStopId,
+      endStopId,
     };
   }
 
   /**
-   * Find route connecting two stops
+   * Create a direct walking route
    */
-  private async findRouteBetweenStops(fromStopId: string, toStopId: string): Promise<Route | null> {
-    const fromRoutes = await this.routesRepository.findRoutesByStop(fromStopId);
-    const toRoutes = await this.routesRepository.findRoutesByStop(toStopId);
+  private createWalkingRoute(
+    fromLat: number,
+    fromLng: number,
+    toLat: number,
+    toLng: number,
+  ): PlannedRoute {
+    const distance = this.calculateDistance(fromLat, fromLng, toLat, toLng);
+    const time = this.calculateWalkingTime(fromLat, fromLng, toLat, toLng);
 
-    // Find common route
-    for (const route of fromRoutes) {
-      if (toRoutes.some((r) => r.id === route.id)) {
-        return route;
-      }
-    }
-
-    return null;
+    return {
+      estimatedTime: time,
+      transfers: 0,
+      steps: [
+        {
+          type: 'walk',
+          from: 'Current Location',
+          to: 'Destination',
+          time,
+          distance,
+        },
+      ],
+      walkingDistance: distance,
+    };
   }
 
   /**
-   * Calculate travel time between stops
+   * Calculate travel time between stops based on transport type
    */
-  private calculateTravelTime(from: Stop, to: Stop, transportType: string): number {
+  private calculateTravelTime(
+    from: Stop,
+    to: Stop,
+    transportType: string,
+  ): number {
     const distance = this.calculateDistance(from.latitude, from.longitude, to.latitude, to.longitude);
 
     // Average speeds (km/h converted to m/min)
     const speeds: Record<string, number> = {
-      BUS: 30 * 1000 / 60, // 30 km/h
-      TRAIN: 50 * 1000 / 60, // 50 km/h
-      METRO: 60 * 1000 / 60, // 60 km/h
+      METRO: 30 * 1000 / 60, // 30 km/h = 500 m/min
+      TRAIN: 40 * 1000 / 60, // 40 km/h = 667 m/min
+      BUS: 20 * 1000 / 60,   // 20 km/h = 333 m/min
     };
 
-    const speed = speeds[transportType] || 30 * 1000 / 60;
-    return Math.round(distance / speed);
+    const speed = speeds[transportType] || 333; // Default to bus speed
+    return Math.max(1, Math.round(distance / speed)); // At least 1 minute
   }
 
   /**
    * Calculate walking time between coordinates
    */
-  private calculateWalkingTime(fromLat: number, fromLng: number, toLat: number, toLng: number): number {
+  private calculateWalkingTime(
+    fromLat: number,
+    fromLng: number,
+    toLat: number,
+    toLng: number,
+  ): number {
     const distance = this.calculateDistance(fromLat, fromLng, toLat, toLng);
-    const walkingSpeed = 5 * 1000 / 60; // 5 km/h in m/min
-    return Math.round(distance / walkingSpeed);
+    const walkingSpeed = 83.33; // 5 km/h = 83.33 m/min
+    return Math.max(1, Math.round(distance / walkingSpeed));
   }
 
   /**
@@ -328,40 +604,4 @@ export class RoutingService {
   private toRad(degrees: number): number {
     return degrees * (Math.PI / 180);
   }
-
-  /**
-   * Map transport type to route step type
-   */
-  private mapTransportType(transportType: string): RouteStepType {
-    switch (transportType) {
-      case 'BUS':
-        return 'bus';
-      case 'TRAIN':
-        return 'train';
-      case 'METRO':
-        return 'metro';
-      default:
-        return 'walk';
-    }
-  }
-
-  /**
-   * Create a simple walking route
-   */
-  private createWalkingRoute(fromLat: number, fromLng: number, toLat: number, toLng: number): PlannedRoute {
-    const time = this.calculateWalkingTime(fromLat, fromLng, toLat, toLng);
-    return {
-      estimatedTime: time,
-      transfers: 0,
-      steps: [
-        {
-          type: 'walk',
-          from: 'Current Location',
-          to: 'Destination',
-          time,
-        },
-      ],
-    };
-  }
 }
-

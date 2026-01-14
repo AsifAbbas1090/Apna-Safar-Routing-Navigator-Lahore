@@ -6,6 +6,7 @@ import { Stop, StopType, Prisma } from '@prisma/client';
  * Stops Repository
  * Handles all database operations for stops
  * Follows Repository Pattern - no business logic here
+ * Uses PostGIS for efficient geospatial queries
  */
 @Injectable()
 export class StopsRepository {
@@ -32,39 +33,51 @@ export class StopsRepository {
 
   /**
    * Find nearest stops to a coordinate
-   * Uses PostGIS for efficient geo queries
-   * Note: Requires PostGIS extension in database
+   * Uses PostGIS ST_DWithin for efficient geo queries
+   * Falls back to Haversine if PostGIS is not available
    * 
-   * Fallback: If PostGIS is not available, uses simple distance calculation
+   * @param latitude - Latitude coordinate
+   * @param longitude - Longitude coordinate
+   * @param radiusMeters - Search radius in meters (default: 500m)
+   * @param limit - Maximum number of results (default: 10)
+   * @returns Array of stops with distance_m field
    */
   async findNearest(
     latitude: number,
     longitude: number,
-    radiusMeters: number = 1000,
+    radiusMeters: number = 500,
     limit: number = 10,
-  ): Promise<Stop[]> {
+  ): Promise<(Stop & { distance_m: number })[]> {
     try {
-      // Using raw SQL for PostGIS ST_DWithin function
-      // Note: This requires PostGIS extension to be enabled
-      return await this.prisma.$queryRaw<Stop[]>`
-        SELECT * FROM stops
-        WHERE ST_DWithin(
-          ST_MakePoint(longitude, latitude)::geography,
-          ST_MakePoint(${longitude}, ${latitude})::geography,
-          ${radiusMeters}
-        )
-        ORDER BY ST_Distance(
-          ST_MakePoint(longitude, latitude)::geography,
-          ST_MakePoint(${longitude}, ${latitude})::geography
-        )
+      // PostGIS query using geography(Point,4326) column
+      // ST_DWithin checks if point is within radius
+      // ST_Distance calculates actual distance
+      const rows = await this.prisma.$queryRaw<
+        (Stop & { distance_m: number })[]
+      >`
+        SELECT
+          s.*,
+          ST_Distance(
+            s.location,
+            ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography
+          ) AS distance_m
+        FROM stops s
+        WHERE s.location IS NOT NULL
+          AND ST_DWithin(
+            s.location,
+            ST_SetSRID(ST_MakePoint(${longitude}, ${latitude}), 4326)::geography,
+            ${radiusMeters}
+          )
+        ORDER BY distance_m
         LIMIT ${limit}
       `;
+
+      return rows;
     } catch (error) {
       // Fallback: Simple distance calculation if PostGIS is not available
-      console.warn('PostGIS not available, using fallback distance calculation');
+      console.warn('PostGIS not available, using fallback distance calculation', error);
       const allStops = await this.findAll();
-      
-      // Calculate distance for each stop and filter
+
       const stopsWithDistance = allStops
         .map((stop) => {
           const distance = this.calculateDistance(
@@ -78,7 +91,10 @@ export class StopsRepository {
         .filter((item) => item.distance <= radiusMeters)
         .sort((a, b) => a.distance - b.distance)
         .slice(0, limit)
-        .map((item) => item.stop);
+        .map((item) => ({
+          ...item.stop,
+          distance_m: item.distance,
+        }));
 
       return stopsWithDistance;
     }
@@ -117,6 +133,7 @@ export class StopsRepository {
 
   /**
    * Create a new stop
+   * Location column will be auto-populated by database trigger if PostGIS is enabled
    */
   async create(data: Prisma.StopCreateInput): Promise<Stop> {
     return this.prisma.stop.create({
@@ -143,4 +160,3 @@ export class StopsRepository {
     });
   }
 }
-

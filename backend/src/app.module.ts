@@ -6,6 +6,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { StopsModule } from './stops/stops.module';
 import { RoutesModule } from './routes/routes.module';
 import { RoutingModule } from './routing/routing.module';
+import { AuthModule } from './auth/auth.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 
 /**
  * Root Application Module
@@ -18,9 +20,11 @@ import { RoutingModule } from './routing/routing.module';
       envFilePath: '.env',
     }),
     PrismaModule,
+    AuthModule,
     StopsModule,
     RoutesModule,
     RoutingModule,
+    DashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],

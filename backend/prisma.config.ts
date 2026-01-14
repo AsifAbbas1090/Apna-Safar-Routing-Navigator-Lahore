@@ -9,6 +9,11 @@ import { defineConfig } from "prisma/config";
 const config: any = {
   schema: "prisma/schema.prisma",
 
+  // Top-level datasource - required for prisma db push (uses DIRECT_URL)
+  datasource: {
+    url: process.env.DIRECT_URL!,
+  },
+
   // Runtime queries use DATABASE_URL (Transaction Pooler, port 6543)
   db: {
     adapter: {

@@ -12,7 +12,7 @@ import { PrismaModule } from '../prisma/prisma.module';
   imports: [PrismaModule],
   controllers: [StopsController],
   providers: [StopsService, StopsRepository],
-  exports: [StopsService, StopsRepository],
+  exports: [StopsService, StopsRepository, StopsController],
 })
 export class StopsModule {}
 
