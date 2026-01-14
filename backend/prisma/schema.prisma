@@ -1,0 +1,115 @@
+// Prisma Schema for Apna Safar - Public Transport Navigation System
+// Database: Supabase PostgreSQL with PostGIS extension
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Transport stop locations
+model Stop {
+  id        String   @id @default(uuid())
+  name      String
+  latitude  Float
+  longitude Float
+  type      StopType
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  routeStops RouteStop[]
+  transfersFrom Transfer[] @relation("FromStop")
+  transfersTo   Transfer[] @relation("ToStop")
+
+  @@index([latitude, longitude])
+  @@index([type])
+  @@map("stops")
+}
+
+// Transport routes (bus lines, metro lines, etc.)
+model Route {
+  id            String      @id @default(uuid())
+  name          String
+  transportType TransportType
+  color         String?     // Hex color for UI display
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  // Relations
+  routeStops RouteStop[]
+  fareRules  FareRule[]
+
+  @@index([transportType])
+  @@map("routes")
+}
+
+// Junction table: Routes and their stops in order
+model RouteStop {
+  id         String   @id @default(uuid())
+  routeId    String
+  stopId     String
+  stopOrder  Int      // Order of stop in route (0, 1, 2, ...)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop  Stop  @relation(fields: [stopId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, stopOrder])
+  @@index([routeId])
+  @@index([stopId])
+  @@map("route_stops")
+}
+
+// Transfer points between stops (walking connections)
+model Transfer {
+  id                 String   @id @default(uuid())
+  fromStopId         String
+  toStopId           String
+  walkingDistanceM   Float    // Distance in meters
+  estimatedTimeMin   Int      // Estimated walking time in minutes
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  fromStop Stop @relation("FromStop", fields: [fromStopId], references: [id], onDelete: Cascade)
+  toStop   Stop @relation("ToStop", fields: [toStopId], references: [id], onDelete: Cascade)
+
+  @@unique([fromStopId, toStopId])
+  @@index([fromStopId])
+  @@index([toStopId])
+  @@map("transfers")
+}
+
+// Fare rules (for future pricing features)
+model FareRule {
+  id         String   @id @default(uuid())
+  routeId    String
+  baseFare   Float    // Base fare in PKR
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@index([routeId])
+  @@map("fare_rules")
+}
+
+// Enums
+enum StopType {
+  BUS
+  TRAIN
+  METRO
+  WALKING
+}
+
+enum TransportType {
+  BUS
+  TRAIN
+  METRO
+}
