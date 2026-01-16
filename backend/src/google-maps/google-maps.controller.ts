@@ -18,17 +18,10 @@ class CoordinateDto {
 }
 
 /**
- * Geocode DTO
+ * Location DTO for autocomplete bias
+ * Must be defined before GeocodeDto which uses it
  */
-class GeocodeDto {
-  @IsString()
-  address: string;
-}
-
-/**
- * Reverse Geocode DTO
- */
-class ReverseGeocodeDto {
+class LocationDto {
   @IsNumber()
   lat: number;
 
@@ -37,9 +30,30 @@ class ReverseGeocodeDto {
 }
 
 /**
- * Location DTO for autocomplete bias
+ * Geocode DTO
  */
-class LocationDto {
+class GeocodeDto {
+  @IsString()
+  address: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LocationDto)
+  location?: LocationDto;
+
+  @IsOptional()
+  @IsNumber()
+  radius?: number;
+
+  @IsOptional()
+  @IsString()
+  components?: string;
+}
+
+/**
+ * Reverse Geocode DTO
+ */
+class ReverseGeocodeDto {
   @IsNumber()
   lat: number;
 
@@ -112,7 +126,15 @@ export class GoogleMapsController {
   @Post('geocode')
   async geocode(@Request() req, @Body() geocodeDto: GeocodeDto) {
     const userId = req.user?.id || 'guest';
-    return this.googleMapsService.geocode(userId, geocodeDto.address);
+    return this.googleMapsService.geocode(
+      userId,
+      geocodeDto.address,
+      {
+        location: geocodeDto.location,
+        radius: geocodeDto.radius,
+        components: geocodeDto.components,
+      }
+    );
   }
 
   /**
@@ -139,6 +161,9 @@ export class GoogleMapsController {
   @UseGuards(OptionalJwtAuthGuard)
   @Post('autocomplete')
   async autocomplete(@Request() req, @Body() autocompleteDto: AutocompleteDto) {
+    // #region agent log
+    const fs5 = require('fs'); const logPath5 = 'e:\\Asif\\Apna Safar\\.cursor\\debug.log'; try { fs5.appendFileSync(logPath5, JSON.stringify({location:'google-maps.controller.ts:141',message:'autocomplete endpoint called',data:{input:autocompleteDto.input,hasLocation:!!autocompleteDto.location},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})+'\n'); } catch(e) {}
+    // #endregion
     const userId = req.user?.id || 'guest';
     return this.googleMapsService.autocomplete(
       userId,

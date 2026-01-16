@@ -23,7 +23,15 @@ export class GoogleMapsService {
   /**
    * Geocode address to coordinates
    */
-  async geocode(userId: string, address: string): Promise<{ lat: number; lng: number }> {
+  async geocode(
+    userId: string,
+    address: string,
+    options?: {
+      location?: { lat: number; lng: number };
+      radius?: number;
+      components?: string;
+    }
+  ): Promise<{ lat: number; lng: number }> {
     // Skip usage tracking for guest users
     if (userId !== 'guest') {
       // Check usage limit
@@ -34,7 +42,19 @@ export class GoogleMapsService {
     }
 
     try {
-      const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${this.apiKey}`;
+      let url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${this.apiKey}`;
+      
+      // Add location bias for city-specific results
+      if (options?.location) {
+        url += `&location=${options.location.lat},${options.location.lng}`;
+      }
+      if (options?.radius) {
+        url += `&radius=${options.radius}`;
+      }
+      if (options?.components) {
+        url += `&components=${encodeURIComponent(options.components)}`;
+      }
+      
       const response = await fetch(url);
       
       if (!response.ok) {
