@@ -2,12 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { StopsRepository } from '../stops/stops.repository';
 import { RoutesRepository } from '../routes/routes.repository';
 import { PrismaService } from '../prisma/prisma.service';
+import { GoogleMapsService } from '../google-maps/google-maps.service';
 import { Stop, Route } from '@prisma/client';
 
 /**
  * Route Step Types
  */
-export type RouteStepType = 'walk' | 'bus' | 'train' | 'metro';
+export type RouteStepType = 'walk' | 'bus' | 'train' | 'metro' | 'orange_line' | 'feeder';
 
 export interface RouteStep {
   type: RouteStepType;
@@ -49,6 +50,7 @@ export class RoutingService {
     private readonly stopsRepository: StopsRepository,
     private readonly routesRepository: RoutesRepository,
     private readonly prisma: PrismaService,
+    private readonly googleMapsService: GoogleMapsService,
   ) {}
 
   /**
@@ -122,6 +124,8 @@ export class RoutingService {
 
   /**
    * Plan a route from origin to destination
+   * First tries Google Maps transit (uses Google's comprehensive transit database)
+   * Falls back to our database if Google Maps fails
    */
   async planRoute(
     fromLat: number,
@@ -130,9 +134,29 @@ export class RoutingService {
     toLng: number,
     preference: RoutePreference = 'fastest',
   ): Promise<PlannedRoute> {
+    // Try Google Maps transit first (uses Google's comprehensive transit data)
+    // This includes Metro, Orange Line, Feeder buses (FRT11, MTRT1, FRT15, etc.)
+    try {
+      const googleRoute = await this.planRouteWithGoogleTransit(
+        fromLat,
+        fromLng,
+        toLat,
+        toLng,
+        preference,
+      );
+      if (googleRoute && googleRoute.steps.length > 0) {
+        console.log('✅ Using Google Maps transit directions');
+        return googleRoute;
+      }
+    } catch (error) {
+      console.warn('⚠️ Google Maps transit failed, falling back to database:', error);
+    }
+
+    // Fallback: Use our database
     // Step 1: Find nearest stops to origin and destination
-    const originStops = await this.stopsRepository.findNearest(fromLat, fromLng, 500, 5);
-    const destinationStops = await this.stopsRepository.findNearest(toLat, toLng, 500, 5);
+    // Increased radius to 2000m (2km) to find more stops
+    const originStops = await this.stopsRepository.findNearest(fromLat, fromLng, 2000, 10);
+    const destinationStops = await this.stopsRepository.findNearest(toLat, toLng, 2000, 10);
 
     if (originStops.length === 0 || destinationStops.length === 0) {
       // Fallback: Direct walking route if no stops found
@@ -462,10 +486,22 @@ export class RoutingService {
 
             const route = await this.routesRepository.findByIdWithStops(edge.routeId);
             const routeName = route?.name || 'Unknown Route';
-            const routeType = route?.transportType.toLowerCase() as RouteStepType;
+            const transportType = route?.transportType;
+            
+            // Map transport type to step type
+            let stepType: RouteStepType = 'bus';
+            if (transportType === 'METRO') {
+              stepType = 'metro';
+            } else if (transportType === 'ORANGE_LINE') {
+              stepType = 'orange_line';
+            } else if (transportType === 'FEEDER') {
+              stepType = 'feeder';
+            } else if (transportType === 'TRAIN') {
+              stepType = 'train';
+            }
 
             steps.push({
-              type: routeType === 'metro' ? 'metro' : routeType === 'train' ? 'train' : 'bus',
+              type: stepType,
               from: fromStop.name,
               to: toStop.name,
               route: routeName,
@@ -603,5 +639,112 @@ export class RoutingService {
 
   private toRad(degrees: number): number {
     return degrees * (Math.PI / 180);
+  }
+
+  /**
+   * Plan route using Google Maps transit directions
+   * Uses Google's comprehensive transit database (Metro, Orange Line, Feeder buses, etc.)
+   */
+  private async planRouteWithGoogleTransit(
+    fromLat: number,
+    fromLng: number,
+    toLat: number,
+    toLng: number,
+    preference: RoutePreference,
+  ): Promise<PlannedRoute | null> {
+    try {
+      const userId = 'guest'; // Use guest for transit queries
+      const directions = await this.googleMapsService.getTransitDirections(
+        userId,
+        { lat: fromLat, lng: fromLng },
+        { lat: toLat, lng: toLng },
+      );
+
+      if (!directions || !directions.routes || directions.routes.length === 0) {
+        return null;
+      }
+
+      // Use the first route (Google provides multiple options)
+      const route = directions.routes[0];
+      const steps: RouteStep[] = [];
+      let totalTime = 0;
+      let transfers = 0;
+      let totalWalkingDistance = 0;
+
+      // Process each leg of the route
+      for (const leg of route.legs) {
+        for (const step of leg.steps) {
+          if (step.travel_mode === 'WALKING') {
+            const distance = step.distance?.value || 0; // in meters
+            const duration = Math.round((step.duration?.value || 0) / 60); // convert to minutes
+            totalWalkingDistance += distance;
+            totalTime += duration;
+
+            steps.push({
+              type: 'walk',
+              from: step.start_location ? 'Previous Location' : 'Current Location',
+              to: step.end_location ? 'Next Location' : 'Destination',
+              time: duration,
+              distance: distance,
+            });
+          } else if (step.travel_mode === 'TRANSIT' && step.transit_details) {
+            const transit = step.transit_details;
+            const duration = Math.round((step.duration?.value || 0) / 60); // convert to minutes
+            totalTime += duration;
+
+            // Determine transit type from line
+            const lineName = transit.line?.name || '';
+            const lineShortName = transit.line?.short_name || '';
+            let transitType: RouteStepType = 'bus';
+            
+            if (lineName.toUpperCase().includes('METRO') || lineName.toUpperCase().includes('MTR')) {
+              transitType = 'metro';
+            } else if (lineName.toUpperCase().includes('ORANGE') || lineName.toUpperCase().includes('ORANGE LINE')) {
+              transitType = 'orange_line';
+            } else if (lineName.toUpperCase().includes('FEEDER') || lineName.toUpperCase().includes('FRT') || lineName.toUpperCase().includes('SPEEDO')) {
+              transitType = 'feeder';
+            } else if (lineName.toUpperCase().includes('TRAIN')) {
+              transitType = 'train';
+            }
+
+            // Count transfers
+            if (steps.length > 0 && steps[steps.length - 1].type !== 'walk') {
+              transfers++;
+            }
+
+            steps.push({
+              type: transitType,
+              from: transit.departure_stop?.name || 'Station',
+              to: transit.arrival_stop?.name || 'Station',
+              route: lineShortName || lineName,
+              time: duration,
+            });
+          }
+        }
+      }
+
+      // Update step "from" fields for better readability
+      for (let i = 0; i < steps.length; i++) {
+        if (i === 0 && steps[i].type === 'walk') {
+          steps[i].from = 'Current Location';
+        }
+        if (i > 0 && steps[i].type === 'walk' && steps[i - 1].type !== 'walk') {
+          steps[i].from = steps[i - 1].to;
+        }
+        if (i === steps.length - 1 && steps[i].type === 'walk') {
+          steps[i].to = 'Destination';
+        }
+      }
+
+      return {
+        estimatedTime: totalTime,
+        transfers,
+        steps,
+        walkingDistance: totalWalkingDistance,
+      };
+    } catch (error) {
+      console.error('Error planning route with Google Maps transit:', error);
+      return null;
+    }
   }
 }

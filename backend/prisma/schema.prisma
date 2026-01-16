@@ -151,13 +151,45 @@ model User {
   occupation   String?  // e.g., "student", "professional", "retired"
   // Supabase Auth handles password, so we store the auth user ID
   supabaseUserId String? @unique // Links to Supabase Auth users
+  
+  // Subscription fields
+  isPremium    Boolean  @default(false)
+  premiumExpiresAt DateTime? // Subscription expiry date
+  subscriptionPlan String? // e.g., "free", "premium", "enterprise"
+  
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   // Relations
   plannedRoutes PlannedRoute[]
+  apiUsage     UserApiUsage?
 
   @@map("users")
+}
+
+// API usage tracking for Google Maps API limits
+model UserApiUsage {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Google Maps API usage counters
+  dynamicMapsCount      Int      @default(0) // Maps JavaScript API
+  placesAutocompleteCount Int    @default(0) // Places Autocomplete API
+  directionsCount       Int      @default(0) // Directions/Routes API
+  geocodingCount        Int      @default(0) // Geocoding API
+  staticMapsCount      Int       @default(0) // Static Maps API (if used)
+  
+  // Monthly reset tracking
+  lastResetAt           DateTime @default(now())
+  resetMonth            Int      // 1-12, current month for reset tracking
+  
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([userId])
+  @@index([resetMonth])
+  @@map("user_api_usage")
 }
 
 // Enums
@@ -166,10 +198,14 @@ enum StopType {
   TRAIN
   METRO
   WALKING
+  ORANGE_LINE  // Orange Line Metro
+  FEEDER       // Feeder/Speedo Bus
 }
 
 enum TransportType {
   BUS
   TRAIN
   METRO
+  ORANGE_LINE  // Orange Line Metro
+  FEEDER       // Feeder/Speedo Bus
 }

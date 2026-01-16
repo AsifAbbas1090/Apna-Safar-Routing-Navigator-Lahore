@@ -69,6 +69,9 @@ export class AuthController {
       email: req.user.email,
       name: req.user.name,
       occupation: req.user.occupation,
+      isPremium: req.user.isPremium,
+      premiumExpiresAt: req.user.premiumExpiresAt,
+      subscriptionPlan: req.user.subscriptionPlan,
     };
   }
 

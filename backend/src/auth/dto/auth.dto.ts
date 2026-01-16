@@ -59,5 +59,8 @@ export class UserResponseDto {
   email: string;
   name?: string | null;
   occupation?: string | null;
+  isPremium?: boolean;
+  premiumExpiresAt?: Date | null;
+  subscriptionPlan?: string | null;
 }
 

@@ -6,6 +6,7 @@ import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RoutesService } from '../routes/routes.service';
 import { StopsRepository } from '../stops/stops.repository';
+import { NavigationService } from '../navigation/navigation.service';
 
 /**
  * Coordinate DTO
@@ -82,18 +83,27 @@ export class RoutingController {
     private readonly routingService: RoutingService,
     private readonly routesService: RoutesService,
     private readonly stopsRepository: StopsRepository,
+    private readonly navigationService: NavigationService,
   ) {}
 
-  // POST /route/plan → coordinates-based planning
+  // POST /route/plan → coordinates-based planning with AI instructions
   @Post('plan')
-  async planRoute(@Body() planRouteDto: PlanRouteDto): Promise<PlannedRoute> {
-    return this.routingService.planRoute(
+  async planRoute(@Body() planRouteDto: PlanRouteDto): Promise<PlannedRoute & { instructions?: string[] }> {
+    const route = await this.routingService.planRoute(
       planRouteDto.from.lat,
       planRouteDto.from.lng,
       planRouteDto.to.lat,
       planRouteDto.to.lng,
       planRouteDto.preference || 'fastest',
     );
+    
+    // Generate AI navigation instructions
+    const instructions = this.navigationService.generateInstructions(route);
+    
+    return {
+      ...route,
+      instructions,
+    };
   }
 
   // GET /route/routes?from=<stopId>&to=<stopId>

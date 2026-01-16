@@ -72,32 +72,41 @@ export class StopsRepository {
         LIMIT ${limit}
       `;
 
-      return rows;
+      // If PostGIS query returns results, use them
+      if (rows && rows.length > 0) {
+        return rows;
+      }
+      
+      // If no results from PostGIS (maybe location field is NULL), fall through to fallback
+      console.warn('PostGIS query returned no results (location field may be NULL), using fallback');
     } catch (error) {
       // Fallback: Simple distance calculation if PostGIS is not available
-      console.warn('PostGIS not available, using fallback distance calculation', error);
-      const allStops = await this.findAll();
-
-      const stopsWithDistance = allStops
-        .map((stop) => {
-          const distance = this.calculateDistance(
-            latitude,
-            longitude,
-            stop.latitude,
-            stop.longitude,
-          );
-          return { stop, distance };
-        })
-        .filter((item) => item.distance <= radiusMeters)
-        .sort((a, b) => a.distance - b.distance)
-        .slice(0, limit)
-        .map((item) => ({
-          ...item.stop,
-          distance_m: item.distance,
-        }));
-
-      return stopsWithDistance;
+      console.warn('PostGIS query failed, using fallback distance calculation', error);
     }
+    
+    // Fallback: Use simple distance calculation with latitude/longitude
+    // This works even if PostGIS location field is NULL
+    const allStops = await this.findAll();
+
+    const stopsWithDistance = allStops
+      .map((stop) => {
+        const distance = this.calculateDistance(
+          latitude,
+          longitude,
+          stop.latitude,
+          stop.longitude,
+        );
+        return { stop, distance };
+      })
+      .filter((item) => item.distance <= radiusMeters)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, limit)
+      .map((item) => ({
+        ...item.stop,
+        distance_m: item.distance,
+      }));
+
+    return stopsWithDistance;
   }
 
   /**
