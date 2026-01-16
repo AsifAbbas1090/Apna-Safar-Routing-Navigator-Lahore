@@ -52,6 +52,37 @@ export class GoogleSignUpDto {
 }
 
 /**
+ * Forgot Password DTO
+ */
+export class ForgotPasswordDto {
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+}
+
+/**
+ * Reset Password DTO
+ */
+export class ResetPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+
+  @IsString()
+  @MinLength(6)
+  password: string;
+}
+
+/**
+ * Confirm Email DTO
+ */
+export class ConfirmEmailDto {
+  @IsString()
+  @IsNotEmpty()
+  token: string;
+}
+
+/**
  * User Response DTO
  */
 export class UserResponseDto {
@@ -59,8 +90,6 @@ export class UserResponseDto {
   email: string;
   name?: string | null;
   occupation?: string | null;
-  isPremium?: boolean;
-  premiumExpiresAt?: Date | null;
-  subscriptionPlan?: string | null;
+  emailVerified?: boolean;
 }
 

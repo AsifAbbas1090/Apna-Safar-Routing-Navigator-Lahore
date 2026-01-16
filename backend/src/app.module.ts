@@ -12,6 +12,9 @@ import { ApiUsageModule } from './api-usage/api-usage.module';
 import { GoogleMapsModule } from './google-maps/google-maps.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { NavigationModule } from './navigation/navigation.module';
+import { ContactModule } from './contact/contact.module';
+import { EmailModule } from './email/email.module';
+import { ReviewsModule } from './reviews/reviews.module';
 import { ScheduleModule } from '@nestjs/schedule';
 
 /**
@@ -35,6 +38,9 @@ import { ScheduleModule } from '@nestjs/schedule';
     GoogleMapsModule,
     SubscriptionModule,
     NavigationModule,
+    ContactModule,
+    EmailModule,
+    ReviewsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

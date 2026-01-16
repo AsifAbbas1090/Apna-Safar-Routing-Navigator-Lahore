@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, UseGuards, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { SignUpDto, SignInDto, GoogleSignUpDto, UserResponseDto } from './dto/auth.dto';
+import { SignUpDto, SignInDto, GoogleSignUpDto, UserResponseDto, ForgotPasswordDto, ResetPasswordDto, ConfirmEmailDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 /**
@@ -57,6 +57,33 @@ export class AuthController {
   }
 
   /**
+   * Confirm email address
+   * POST /auth/confirm-email
+   */
+  @Post('confirm-email')
+  async confirmEmail(@Body() confirmEmailDto: ConfirmEmailDto) {
+    return this.authService.confirmEmail(confirmEmailDto);
+  }
+
+  /**
+   * Forgot password - send reset email
+   * POST /auth/forgot-password
+   */
+  @Post('forgot-password')
+  async forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(forgotPasswordDto);
+  }
+
+  /**
+   * Reset password with token
+   * POST /auth/reset-password
+   */
+  @Post('reset-password')
+  async resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
+    return this.authService.resetPassword(resetPasswordDto);
+  }
+
+  /**
    * Get current user profile
    * GET /auth/me
    * Protected route - requires authentication
@@ -69,9 +96,7 @@ export class AuthController {
       email: req.user.email,
       name: req.user.name,
       occupation: req.user.occupation,
-      isPremium: req.user.isPremium,
-      premiumExpiresAt: req.user.premiumExpiresAt,
-      subscriptionPlan: req.user.subscriptionPlan,
+      emailVerified: req.user.emailVerified,
     };
   }
 
