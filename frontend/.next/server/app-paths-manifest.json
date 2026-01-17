@@ -1,8 +1,5 @@
 {
-  "/plan/page": "app/plan/page.js",
   "/page": "app/page.js",
   "/login/page": "app/login/page.js",
-  "/services/page": "app/services/page.js",
-  "/live/page": "app/live/page.js",
-  "/contact/page": "app/contact/page.js"
+  "/signup/page": "app/signup/page.js"
 }
