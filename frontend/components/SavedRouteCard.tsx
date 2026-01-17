@@ -11,6 +11,7 @@ interface SavedRouteCardProps {
   to: string;
   onStart: () => void;
   onDelete?: () => void;
+  isDeleting?: boolean;
 }
 
 export default function SavedRouteCard({
@@ -19,6 +20,7 @@ export default function SavedRouteCard({
   to,
   onStart,
   onDelete,
+  isDeleting = false,
 }: SavedRouteCardProps) {
   const router = useRouter();
 
@@ -54,8 +56,13 @@ export default function SavedRouteCard({
           Start Route
         </Button>
         {onDelete && (
-          <Button variant="outline" size="icon" onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={onDelete}
+            disabled={isDeleting}
+          >
+            <Trash2 className={`h-4 w-4 ${isDeleting ? 'animate-spin' : ''}`} />
           </Button>
         )}
       </CardFooter>

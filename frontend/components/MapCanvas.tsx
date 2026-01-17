@@ -5,9 +5,12 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { LAHORE_CENTER } from "@/lib/mockData";
 
-// Set Mapbox access token (placeholder - user should replace with their own)
-mapboxgl.accessToken =
-  process.env.NEXT_PUBLIC_MAPBOX_TOKEN || "pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4NXVycTA2emYycXBndHRqcmZ3N3gifQ.rJcFIG214AriISLbB6B5aw";
+// Set Mapbox access token from environment variable
+const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+if (!mapboxToken) {
+  console.warn('⚠️ NEXT_PUBLIC_MAPBOX_TOKEN is not set. Map will not work. Get your token from https://account.mapbox.com/access-tokens/');
+}
+mapboxgl.accessToken = mapboxToken || '';
 
 export interface MapMarker {
   id: string;
@@ -36,6 +39,11 @@ export default function MapCanvas({
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
+    
+    if (!mapboxToken) {
+      console.error('Mapbox token is missing. Please set NEXT_PUBLIC_MAPBOX_TOKEN in your .env.local file');
+      return;
+    }
 
     // Initialize map
     map.current = new mapboxgl.Map({

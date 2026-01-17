@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { City, getDefaultCity } from "@/lib/cities";
 
 export type RoutePreference = "fastest" | "least-walking" | "least-transfers";
 
@@ -16,6 +18,7 @@ export interface Route {
 }
 
 interface RouteStore {
+  selectedCity: City | null;
   currentLocation: string;
   destinations: string[];
   preference: RoutePreference;
@@ -23,6 +26,7 @@ interface RouteStore {
   routes: Route[];
   currentRoute?: Route;
 
+  setSelectedCity: (city: City) => void;
   setCurrentLocation: (val: string) => void;
   addDestination: (val: string) => void;
   updateDestination: (index: number, val: string) => void;
@@ -32,39 +36,59 @@ interface RouteStore {
   setRoutes: (routes: Route[]) => void;
   setCurrentRoute: (route?: Route) => void;
   clearRoute: () => void;
+  resetDestinations: () => void;
 }
 
-export const useRouteStore = create<RouteStore>((set) => ({
-  currentLocation: "",
-  destinations: [],
-  preference: "fastest",
-  routes: [],
-  currentRoute: undefined,
-
-  setCurrentLocation: (val) => set({ currentLocation: val }),
-  addDestination: (val) =>
-    set((state) => ({ destinations: [...state.destinations, val] })),
-  updateDestination: (index, val) =>
-    set((state) => {
-      const newDests = [...state.destinations];
-      newDests[index] = val;
-      return { destinations: newDests };
-    }),
-  removeDestination: (index) =>
-    set((state) => ({
-      destinations: state.destinations.filter((_, i) => i !== index),
-    })),
-  setPreference: (val) => set({ preference: val }),
-  selectRoute: (id) => set({ selectedRouteId: id }),
-  setRoutes: (routes) => set({ routes }),
-  setCurrentRoute: (route) => set({ currentRoute: route }),
-  clearRoute: () =>
-    set({
+export const useRouteStore = create<RouteStore>()(
+  persist(
+    (set) => ({
+      selectedCity: null,
       currentLocation: "",
       destinations: [],
-      selectedRouteId: undefined,
+      preference: "fastest",
       routes: [],
       currentRoute: undefined,
+
+      setSelectedCity: (city) => set({ selectedCity: city }),
+      setCurrentLocation: (val) => set({ currentLocation: val }),
+      addDestination: (val) =>
+        set((state) => ({ destinations: [...state.destinations, val] })),
+      updateDestination: (index, val) =>
+        set((state) => {
+          const newDests = [...state.destinations];
+          newDests[index] = val;
+          return { destinations: newDests };
+        }),
+      removeDestination: (index) =>
+        set((state) => ({
+          destinations: state.destinations.filter((_, i) => i !== index),
+        })),
+      setPreference: (val) => set({ preference: val }),
+      selectRoute: (id) => set({ selectedRouteId: id }),
+      setRoutes: (routes) => set({ routes }),
+      setCurrentRoute: (route) => set({ currentRoute: route }),
+      clearRoute: () =>
+        set({
+          // Keep currentLocation and destinations - only clear route data
+          selectedRouteId: undefined,
+          routes: [],
+          currentRoute: undefined,
+        }),
+      resetDestinations: () =>
+        set({
+          // Reset to one empty destination
+          destinations: [""],
+        }),
     }),
-}));
+    {
+      name: "apna-safar-store",
+      partialize: (state) => ({
+        selectedCity: state.selectedCity,
+        currentLocation: state.currentLocation,
+        destinations: state.destinations,
+        preference: state.preference,
+      }),
+    }
+  )
+);
 
