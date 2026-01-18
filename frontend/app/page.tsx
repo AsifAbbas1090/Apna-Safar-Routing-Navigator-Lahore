@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { MapPin, Navigation, Clock, Route, ArrowRight, Play, Brain, Shield, Zap, Globe, CheckCircle2 } from "lucide-react";
+import { MapPin, Navigation, Clock, Route, ArrowRight, Play, Brain, Shield, Zap, Globe, CheckCircle2, Train, Bus, Footprints } from "lucide-react";
 import { motion } from "framer-motion";
 import { SUPPORTED_CITIES } from "@/lib/cities";
 
@@ -73,12 +73,12 @@ export default function LandingPage() {
                   <ArrowRight className="ml-2 h-5 w-5" />
                 </Button>
               </Link>
-              <Link href="/contact">
-                <Button size="lg" variant="outline" className="w-full border-[#556B2F] text-white hover:bg-[#556B2F]/20 sm:w-auto">
+              {/* <Link href="/contact">
+                <Button size="lg" variant="outline" className="w-full border-[#556B2F] text-black hover:bg-[#556B2F]/20 sm:w-auto">
                   <Play className="mr-2 h-5 w-5" />
                   Contact Us
                 </Button>
-              </Link>
+              </Link> */}
             </div>
           </motion.div>
         </div>
@@ -107,20 +107,26 @@ export default function LandingPage() {
               </CardHeader>
               <CardContent>
                 <div className="grid gap-6 md:grid-cols-3">
-                  <div className="rounded-lg bg-black p-6 text-center text-white">
-                    <div className="mb-3 text-3xl font-bold text-[#9AB973]">🚇</div>
-                    <h3 className="mb-2 text-xl font-bold">Metro Systems</h3>
-                    <p className="text-gray-300">Orange Line, Metro Bus, and all metro routes</p>
+                  <div className="rounded-lg border-2 border-gray-200 bg-white p-6 text-center transition-all hover:border-[#556B2F] hover:shadow-lg">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#556B2F]/10">
+                      <Train className="h-8 w-8 text-[#556B2F]" />
+                    </div>
+                    <h3 className="mb-2 text-xl font-bold text-gray-900">Metro Systems</h3>
+                    <p className="text-gray-600">Orange Line, Metro Bus, and all metro routes</p>
                   </div>
-                  <div className="rounded-lg bg-black p-6 text-center text-white">
-                    <div className="mb-3 text-3xl font-bold text-[#9AB973]">🚌</div>
-                    <h3 className="mb-2 text-xl font-bold">Bus Networks</h3>
-                    <p className="text-gray-300">Feeder, Express, Periphery, and Suburban routes</p>
+                  <div className="rounded-lg border-2 border-gray-200 bg-white p-6 text-center transition-all hover:border-[#556B2F] hover:shadow-lg">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#556B2F]/10">
+                      <Bus className="h-8 w-8 text-[#556B2F]" />
+                    </div>
+                    <h3 className="mb-2 text-xl font-bold text-gray-900">Bus Networks</h3>
+                    <p className="text-gray-600">Feeder, Express, Periphery, and Suburban routes</p>
                   </div>
-                  <div className="rounded-lg bg-black p-6 text-center text-white">
-                    <div className="mb-3 text-3xl font-bold text-[#9AB973]">🚶</div>
-                    <h3 className="mb-2 text-xl font-bold">Walking Routes</h3>
-                    <p className="text-gray-300">Optimized walking paths between stops and stations</p>
+                  <div className="rounded-lg border-2 border-gray-200 bg-white p-6 text-center transition-all hover:border-[#556B2F] hover:shadow-lg">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#556B2F]/10">
+                      <Footprints className="h-8 w-8 text-[#556B2F]" />
+                    </div>
+                    <h3 className="mb-2 text-xl font-bold text-gray-900">Walking Routes</h3>
+                    <p className="text-gray-600">Optimized walking paths between stops and stations</p>
                   </div>
                 </div>
               </CardContent>
@@ -276,7 +282,7 @@ export default function LandingPage() {
                 </Button>
               </Link>
               <Link href="/login">
-                <Button size="lg" variant="outline" className="border-[#556B2F] text-white hover:bg-[#556B2F]/20">
+                <Button size="lg" variant="outline" className="border-[#556B2F] text-black hover:bg-[#556B2F]/20 hover:text-white">
                   Login for Stats
                 </Button>
               </Link>
